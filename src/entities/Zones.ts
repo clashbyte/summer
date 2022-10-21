@@ -28,7 +28,6 @@ export class Zones {
    * @param {vec3} end
    * @param {() => void} onEnter
    * @param {() => void} onLeave
-   * @returns {{onEnter: (() => void) | undefined, start: [number, number, number] | Float32Array, active: boolean, end: [number, number, number] | Float32Array, onLeave: (() => void) | undefined}}
    */
   public static addZone(start: vec3, end: vec3, onEnter?: () => void, onLeave?: () => void) {
     const zone = {
