@@ -1,0 +1,94 @@
+{
+  "env": {
+    "node": true,
+    "es6": true
+  },
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/eslint-recommended",
+    "plugin:@typescript-eslint/recommended",
+    "prettier"
+  ],
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "project": "./tsconfig.json"
+  },
+  "plugins": [
+    "@typescript-eslint",
+    "react-hooks",
+    "no-relative-import-paths",
+    "prettier"
+  ],
+  "rules": {
+    "prettier/prettier": ["error", {
+      "bracketSpacing": true,
+      "singleQuote": true,
+      "trailingComma": "none",
+      "semi": true,
+      "tabWidth": 2,
+      "printWidth": 120
+    }],
+    "no-relative-import-paths/no-relative-import-paths": [
+      "error",
+      { "allowSameFolder": true }
+    ],
+    "max-len": ["error", {
+      "code": 120,
+      "ignorePattern": "^import .*",
+      "ignoreStrings": true
+    }],
+    "indent": "off",
+    "semi": ["error"],
+    "no-empty": "warn",
+    "import/prefer-default-export": "off",
+    "no-mixed-operators": "off",
+    "no-plusplus": "off",
+    "no-param-reassign": "off",
+    "import/no-cycle": "off",
+    "no-restricted-syntax": "off",
+    "class-methods-use-this": "off",
+    "radix": "off",
+    "one-var": "off",
+    "consistent-return": "off",
+    "no-multi-assign": "off",
+    "no-console": "off",
+    "no-bitwise": "off",
+    "no-await-in-loop": "off",
+    "react/jsx-closing-tag-location": "off",
+    "react/react-in-jsx-scope": "off",
+    "react/require-default-props": "off",
+    "react/no-array-index-key": "off",
+    "react-hooks/exhaustive-deps": "off",
+    "jsx-quotes": ["error", "prefer-double"],
+    "jsx-a11y/anchor-is-valid": "off",
+    "jsx-a11y/click-events-have-key-events": "off",
+    "jsx-a11y/no-static-element-interactions": "off",
+    "jsx-a11y/no-noninteractive-element-interactions": "off",
+    "jsx-a11y/alt-text": "off",
+    "@typescript-eslint/ban-ts-comment": "off",
+    "@typescript-eslint/no-inferrable-types": "off",
+    "@typescript-eslint/no-non-null-assertion": "off",
+    "@typescript-eslint/no-shadow": "off",
+    "@typescript-eslint/no-loop-func": "off",
+    "@typescript-eslint/no-empty-function": ["error", {
+      "allow": ["methods"]
+    }],
+    "@typescript-eslint/no-unused-vars": ["error", {
+      "args": "none"
+    }],
+    "@next/next/no-img-element": "off",
+    "@typescript-eslint/no-namespace": "off",
+    "@typescript-eslint/explicit-member-accessibility": ["error", {
+      "accessibility": "explicit"
+    }],
+    "@typescript-eslint/ban-types": [
+      "error",
+      {
+        "types": {
+          "{}": false
+        },
+        "extendDefaults": true
+      }
+    ]
+  }
+}

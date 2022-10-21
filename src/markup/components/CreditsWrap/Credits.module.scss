@@ -1,0 +1,47 @@
+
+.credits {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+
+  &__slide {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    visibility: hidden;
+    transition: 600ms ease all;
+    color: #fff;
+    flex-direction: column;
+
+    &.active {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    img {
+      display: block;
+      image-rendering: pixelated;
+    }
+
+    span {
+      display: block;
+      font-size: 25px;
+      margin-bottom: 20px;
+    }
+
+    em {
+      display: block;
+      font-style: normal;
+      font-size: 55px;
+    }
+  }
+}
