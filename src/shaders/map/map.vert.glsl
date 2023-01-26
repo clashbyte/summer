@@ -8,6 +8,8 @@ out vec2 textureUV;
 out float fogDist;
 out vec4 shadowPos;
 out float lightDot;
+out vec4 fragPos;
+out vec3 fragNormal;
 
 void main() {
     textureUV = uv;
@@ -15,10 +17,10 @@ void main() {
     shadowPos /= shadowPos.w;
     lightDot = clamp(dot(normal, normalize(vec3(-1.0, 1.5, -1.0))), 0.0, 1.0);
     lightDot = ceil(lightDot);
+    fragNormal = normal;
 
-
-
-    vec4 viewPos = viewMat * modelMat * vec4(position, 1.0);
-    fogDist = smoothstep(5.0, 70.0, -viewPos.z / viewPos.w);
-    gl_Position = projMat * viewPos;
+    fragPos = modelMat * vec4(position, 1.0);
+    vec4 fogPos = viewMat * fragPos;
+    fogDist = smoothstep(5.0, 70.0, -fogPos.z / fogPos.w);
+    gl_Position = projMat * fogPos;
 }

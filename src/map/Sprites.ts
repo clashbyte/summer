@@ -7,6 +7,8 @@ import { Shader } from 'src/core/Shader';
 import { CollisionBox, Player } from 'src/entities/Player';
 import SpriteFragCode from 'src/shaders/entities/sprite.frag.glsl';
 import SpriteVertCode from 'src/shaders/entities/sprite.vert.glsl';
+import SpriteShadowFragCode from 'src/shaders/entities/sprite_shadow.frag.glsl';
+import SpriteShadowVertCode from 'src/shaders/entities/sprite_shadow.vert.glsl';
 import { World } from './World';
 
 /**
@@ -25,6 +27,8 @@ interface SpriteEntry {
   id: number;
   rotation: number;
   lit?: boolean;
+  offset: vec3;
+  scale: number;
 }
 
 /**
@@ -51,42 +55,98 @@ export class Sprites {
    * @type {SpriteTemplate[]}
    * @private
    */
-  private templates: SpriteTemplate[];
+  private readonly templates: SpriteTemplate[];
 
   /**
    * Sprite instances
    * @type {SpriteEntry[]}
    * @private
    */
-  private entries: SpriteEntry[];
+  private readonly entries: SpriteEntry[];
 
   /**
    * WebGL billboard vertex buffer
    * @type {WebGLBuffer}
    * @private
    */
-  private vertexBuffer: WebGLBuffer;
+  private readonly vertexBuffer: WebGLBuffer;
 
   /**
    * UV buffer
    * @type {WebGLBuffer}
    * @private
    */
-  private uvBuffer: WebGLBuffer;
+  private readonly uvBuffer: WebGLBuffer;
 
   /**
    * Indices buffer
    * @type {WebGLBuffer}
    * @private
    */
-  private indexBuffer: WebGLBuffer;
+  private readonly indexBuffer: WebGLBuffer;
+
+  /**
+   * UV start for instancing
+   * @type {WebGLBuffer}
+   * @private
+   */
+  private readonly uvStartBuffer: WebGLBuffer;
+
+  /**
+   * UV end for instancing
+   * @type {WebGLBuffer}
+   * @private
+   */
+  private readonly uvSizeBuffer: WebGLBuffer;
+
+  /**
+   * Instancing color buffer
+   * @type {WebGLBuffer}
+   * @private
+   */
+  private readonly colorBuffer: WebGLBuffer;
+
+  /**
+   * Instance offset buffer
+   * @type {WebGLBuffer}
+   * @private
+   */
+  private readonly offsetBuffer: WebGLBuffer;
+
+  /**
+   * Instance scale buffer
+   * @type {WebGLBuffer}
+   * @private
+   */
+  private readonly scaleBuffer: WebGLBuffer;
+
+  /**
+   * Total instances count
+   * @type {number}
+   * @private
+   */
+  private billboardCount: number;
 
   /**
    * Direct pass shader
    * @type {Shader}
    * @private
    */
-  private shader: Shader;
+  private readonly shader: Shader;
+
+  /**
+   * Shadow pass shader
+   * @type {Shader}
+   * @private
+   */
+  private readonly shaderShadow: Shader;
+
+  /**
+   * Vertex array object
+   * @type {WebGLVertexArrayObject}
+   * @private
+   */
+  private readonly vao: WebGLVertexArrayObject;
 
   /**
    * Loading sprite assets
@@ -117,7 +177,9 @@ export class Sprites {
         return {
           id: defs.indexOf(en.id as SpriteDef),
           matrix: mat,
-          rotation: en.side
+          rotation: en.side,
+          offset: [en.x, en.y - 0.5, en.z],
+          scale: tpl.scale
         };
       });
 
@@ -132,11 +194,18 @@ export class Sprites {
   public constructor(templates: SpriteTemplate[], entities: SpriteEntry[]) {
     this.templates = templates;
     this.entries = entities;
+    this.billboardCount = 0;
 
     this.shader = new Shader(
       SpriteFragCode,
       SpriteVertCode,
-      ['atlas', 'startUV', 'endUV', 'angleMat', 'color'],
+      ['atlas', 'angle', 'ambient', 'sun'],
+      ['position', 'uv', 'uvStart', 'uvSize', 'color', 'offset', 'scale']
+    );
+    this.shaderShadow = new Shader(
+      SpriteShadowFragCode,
+      SpriteShadowVertCode,
+      ['atlas', 'angle', 'uvStart', 'uvSize', 'offset', 'scale'],
       ['position', 'uv']
     );
     this.vertexBuffer = GL.createBuffer()!;
@@ -151,6 +220,13 @@ export class Sprites {
     GL.bindBuffer(GL.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
     GL.bufferData(GL.ELEMENT_ARRAY_BUFFER, new Uint8Array([0, 1, 2, 1, 3, 2]), GL.STATIC_DRAW);
     GL.bindBuffer(GL.ELEMENT_ARRAY_BUFFER, null);
+
+    this.uvStartBuffer = GL.createBuffer()!;
+    this.uvSizeBuffer = GL.createBuffer()!;
+    this.offsetBuffer = GL.createBuffer()!;
+    this.scaleBuffer = GL.createBuffer()!;
+    this.colorBuffer = GL.createBuffer()!;
+    this.vao = GL.createVertexArray()!;
   }
 
   /**
@@ -158,12 +234,22 @@ export class Sprites {
    * @param {number} delta
    */
   public update(delta: number) {
+    let needRebuild = false;
     for (const t of this.templates) {
       t.frameTime -= delta;
       if (t.frameTime <= 0) {
-        t.currentFrame = (t.currentFrame + 1) % t.frames.length;
+        const newFrame = (t.currentFrame + 1) % t.frames.length;
+        if (newFrame !== t.currentFrame) {
+          t.currentFrame = newFrame;
+          needRebuild = true;
+        }
         t.frameTime = t.frames[t.currentFrame].delay;
       }
+    }
+
+    // Rebuilding instancing VBOs
+    if (needRebuild) {
+      this.rebuildVao();
     }
   }
 
@@ -172,74 +258,56 @@ export class Sprites {
    */
   public render() {
     this.updateQueries();
-    const angleMat = mat4.create();
-    mat4.fromYRotation(angleMat, (Camera.rotation[1] * Math.PI) / 180.0 + Math.PI);
 
+    // Rendering meshes
     for (const en of this.entries) {
       const tpl = this.templates[en.id];
       const frame = tpl.frames[tpl.currentFrame];
-      if (!frame.name.endsWith('.s3d')) {
-        const atlasItem = Resources.SpriteTextures.frames[frame.name.replace('.png', '')];
-        if (!atlasItem) {
-          continue;
-        }
-        const texW = Resources.SpriteTextures.width;
-        const texH = Resources.SpriteTextures.height;
-
-        this.shader.updateMatrix(en.matrix);
-        this.shader.bind();
-        GL.enableVertexAttribArray(this.shader.attribute('position'));
-        GL.enableVertexAttribArray(this.shader.attribute('uv'));
-        GL.bindBuffer(GL.ARRAY_BUFFER, this.vertexBuffer);
-        GL.vertexAttribPointer(this.shader.attribute('position'), 3, GL.FLOAT, false, 0, 0);
-        GL.bindBuffer(GL.ARRAY_BUFFER, this.uvBuffer);
-        GL.vertexAttribPointer(this.shader.attribute('uv'), 2, GL.FLOAT, false, 0, 0);
-
-        GL.uniform3fv(this.shader.uniform('color'), en.lit ? World.SUN_COLOR : World.AMBIENT_COLOR);
-        GL.uniformMatrix4fv(this.shader.uniform('angleMat'), false, angleMat);
-        GL.uniform2f(this.shader.uniform('startUV'), atlasItem.x / texW + 0.001, atlasItem.y / texH + 0.001);
-        GL.uniform2f(this.shader.uniform('endUV'), atlasItem.width / texW - 0.002, atlasItem.height / texH - 0.002);
-
-        GL.bindTexture(GL.TEXTURE_2D, Resources.SpriteTextures.texture);
-        GL.uniform1i(this.shader.uniform('atlas'), 0);
-        GL.bindBuffer(GL.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
-        GL.drawElements(GL.TRIANGLES, 6, GL.UNSIGNED_BYTE, 0);
-        GL.bindBuffer(GL.ELEMENT_ARRAY_BUFFER, null);
-        GL.bindBuffer(GL.ARRAY_BUFFER, null);
-        this.shader.unbind();
-      } else {
+      if (frame.mesh) {
         const mesh = Resources.Models[frame.name];
         if (mesh) {
           mesh.render(en.matrix, (-en.rotation * Math.PI) / 2);
         }
       }
     }
+
+    // Rendering billboards
+    this.renderBillboards((Camera.rotation[1] * Math.PI) / 180.0 + Math.PI);
   }
 
   /**
    * Perform shadow pass
    */
   public renderShadow() {
+    this.rebuildVao();
     this.renderShadowMeshes();
     this.calculateSpritesOcclusion();
-    this.renderShadowBillboards();
+    this.renderBillboards(Math.PI * 0.1);
   }
 
   /**
-   * Rendering billboards to shadow buffer
+   * Render all billboards
+   * @param {number} angle
+   * @private
    */
-  private renderShadowBillboards() {
-    const angleMat = mat4.create();
-    mat4.fromYRotation(angleMat, Math.PI * 0.1);
-    mat4.translate(angleMat, angleMat, [-0.015, 0, -0.05]);
+  private renderBillboards(angle: number) {
+    const mat = mat4.create();
+    mat4.identity(mat);
 
-    for (const en of this.entries) {
-      const tpl = this.templates[en.id];
-      const frame = tpl.frames[tpl.currentFrame];
-      if (!frame.name.endsWith('.s3d')) {
-        this.billboardShadowPass(en, tpl, angleMat);
-      }
-    }
+    this.shader.updateMatrix(mat);
+    this.shader.bind();
+
+    GL.bindTexture(GL.TEXTURE_2D, Resources.SpriteTextures.texture);
+    GL.uniform1i(this.shader.uniform('atlas'), 0);
+    GL.uniform1f(this.shader.uniform('angle'), angle);
+    GL.uniform3fv(this.shader.uniform('ambient'), World.AMBIENT_COLOR);
+    GL.uniform3fv(this.shader.uniform('sun'), World.SUN_COLOR);
+
+    GL.bindVertexArray(this.vao);
+    GL.drawElementsInstanced(GL.TRIANGLES, 6, GL.UNSIGNED_BYTE, 0, this.billboardCount);
+    GL.bindVertexArray(null);
+
+    this.shader.unbind();
   }
 
   /**
@@ -253,13 +321,13 @@ export class Sprites {
     for (const en of this.entries) {
       const tpl = this.templates[en.id];
       const frame = tpl.frames[tpl.currentFrame];
-      if (frame.name.endsWith('.s3d')) {
+      if (frame.mesh) {
         const mesh = Resources.Models[frame.name];
         if (mesh) {
           const mat = mat4.create();
           mat4.copy(mat, en.matrix);
           const mat2 = mat4.fromYRotation(mat4.create(), (-en.rotation * Math.PI) / 2);
-          mesh.render(mat4.multiply(mat4.create(), mat, mat2));
+          mesh.renderShadow(mat4.multiply(mat4.create(), mat, mat2));
         }
       }
     }
@@ -270,18 +338,14 @@ export class Sprites {
    * @private
    */
   private calculateSpritesOcclusion() {
-    const angleMat = mat4.create();
-    mat4.fromYRotation(angleMat, Math.PI * 0.1);
-    mat4.translate(angleMat, angleMat, [-0.015, 0, -0.05]);
-
     this.queries = [];
     for (const en of this.entries) {
       const tpl = this.templates[en.id];
       const frame = tpl.frames[tpl.currentFrame];
-      if (!frame.name.endsWith('.s3d')) {
+      if (!frame.mesh) {
         const query = GL.createQuery()!;
         GL.beginQuery(GL.ANY_SAMPLES_PASSED, query);
-        this.billboardShadowPass(en, tpl, angleMat);
+        this.billboardShadowPass(en, tpl, Math.PI * 0.1);
         GL.endQuery(GL.ANY_SAMPLES_PASSED);
 
         this.queries.push({
@@ -316,10 +380,10 @@ export class Sprites {
    * Render single sprite billboard
    * @param {SpriteEntry} en
    * @param {SpriteTemplate} tpl
-   * @param {mat4} angleMat
+   * @param {number} angle
    * @private
    */
-  private billboardShadowPass(en: SpriteEntry, tpl: SpriteTemplate, angleMat: mat4) {
+  private billboardShadowPass(en: SpriteEntry, tpl: SpriteTemplate, angle: number) {
     const frame = tpl.frames[tpl.currentFrame];
     const atlasItem = Resources.SpriteTextures.frames[frame.name.replace('.png', '')];
     if (!atlasItem) {
@@ -328,26 +392,104 @@ export class Sprites {
     const texW = Resources.SpriteTextures.width;
     const texH = Resources.SpriteTextures.height;
 
-    this.shader.updateMatrix(en.matrix);
-    this.shader.bind();
-    GL.enableVertexAttribArray(this.shader.attribute('position'));
-    GL.enableVertexAttribArray(this.shader.attribute('uv'));
-    GL.bindBuffer(GL.ARRAY_BUFFER, this.vertexBuffer);
-    GL.vertexAttribPointer(this.shader.attribute('position'), 3, GL.FLOAT, false, 0, 0);
-    GL.bindBuffer(GL.ARRAY_BUFFER, this.uvBuffer);
-    GL.vertexAttribPointer(this.shader.attribute('uv'), 2, GL.FLOAT, false, 0, 0);
-
-    GL.uniformMatrix4fv(this.shader.uniform('angleMat'), false, angleMat);
-    GL.uniform2f(this.shader.uniform('startUV'), atlasItem.x / texW + 0.001, atlasItem.y / texH + 0.001);
-    GL.uniform2f(this.shader.uniform('endUV'), atlasItem.width / texW - 0.002, atlasItem.height / texH - 0.002);
+    this.shaderShadow.bind();
 
     GL.bindTexture(GL.TEXTURE_2D, Resources.SpriteTextures.texture);
-    GL.uniform1i(this.shader.uniform('atlas'), 0);
+    GL.uniform1i(this.shaderShadow.uniform('atlas'), 0);
+    GL.uniform3f(this.shaderShadow.uniform('offset'), en.offset[0] - 0.015, en.offset[1], en.offset[2] - 0.05);
+    GL.uniform1f(this.shaderShadow.uniform('angle'), angle);
+    GL.uniform1f(this.shaderShadow.uniform('scale'), tpl.scale);
+    GL.uniform2f(this.shaderShadow.uniform('uvStart'), atlasItem.x / texW + 0.001, atlasItem.y / texH + 0.001);
+    GL.uniform2f(this.shaderShadow.uniform('uvSize'), atlasItem.width / texW - 0.002, atlasItem.height / texH - 0.002);
+
+    GL.enableVertexAttribArray(this.shaderShadow.attribute('position'));
+    GL.enableVertexAttribArray(this.shaderShadow.attribute('uv'));
+    GL.bindBuffer(GL.ARRAY_BUFFER, this.vertexBuffer);
+    GL.vertexAttribPointer(this.shaderShadow.attribute('position'), 3, GL.FLOAT, false, 0, 0);
+    GL.bindBuffer(GL.ARRAY_BUFFER, this.uvBuffer);
+    GL.vertexAttribPointer(this.shaderShadow.attribute('uv'), 2, GL.FLOAT, false, 0, 0);
+
     GL.bindBuffer(GL.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
     GL.drawElements(GL.TRIANGLES, 6, GL.UNSIGNED_BYTE, 0);
     GL.bindBuffer(GL.ELEMENT_ARRAY_BUFFER, null);
     GL.bindBuffer(GL.ARRAY_BUFFER, null);
-    this.shader.unbind();
+    this.shaderShadow.unbind();
+  }
+
+  /**
+   * Rebuild Vertex Array
+   * @private
+   */
+  private rebuildVao() {
+    const texW = Resources.SpriteTextures.width;
+    const texH = Resources.SpriteTextures.height;
+    const uvStart: number[] = [];
+    const uvSize: number[] = [];
+    const offset: number[] = [];
+    const scale: number[] = [];
+    const color: number[] = [];
+    this.billboardCount = 0;
+
+    for (const en of this.entries) {
+      const tpl = this.templates[en.id];
+      const frame = tpl.frames[tpl.currentFrame];
+      if (!frame.mesh) {
+        const atlasItem = Resources.SpriteTextures.frames[frame.name.replace('.png', '')];
+        if (atlasItem) {
+          uvStart.push(atlasItem.x / texW + 0.001, atlasItem.y / texH + 0.001);
+          uvSize.push(atlasItem.width / texW - 0.002, atlasItem.height / texH - 0.002);
+          offset.push(en.offset[0], en.offset[1], en.offset[2]);
+          scale.push(en.scale);
+          color.push(en.lit ? 1 : 0);
+          this.billboardCount++;
+        }
+      }
+    }
+
+    if (this.billboardCount > 0) {
+      GL.bindBuffer(GL.ARRAY_BUFFER, this.uvStartBuffer);
+      GL.bufferData(GL.ARRAY_BUFFER, new Float32Array(uvStart), GL.DYNAMIC_DRAW);
+      GL.bindBuffer(GL.ARRAY_BUFFER, this.uvSizeBuffer);
+      GL.bufferData(GL.ARRAY_BUFFER, new Float32Array(uvSize), GL.DYNAMIC_DRAW);
+      GL.bindBuffer(GL.ARRAY_BUFFER, this.offsetBuffer);
+      GL.bufferData(GL.ARRAY_BUFFER, new Float32Array(offset), GL.DYNAMIC_DRAW);
+      GL.bindBuffer(GL.ARRAY_BUFFER, this.scaleBuffer);
+      GL.bufferData(GL.ARRAY_BUFFER, new Float32Array(scale), GL.DYNAMIC_DRAW);
+      GL.bindBuffer(GL.ARRAY_BUFFER, this.colorBuffer);
+      GL.bufferData(GL.ARRAY_BUFFER, new Float32Array(color), GL.DYNAMIC_DRAW);
+      GL.bindBuffer(GL.ARRAY_BUFFER, null);
+
+      GL.bindVertexArray(this.vao);
+      GL.enableVertexAttribArray(this.shader.attribute('position'));
+      GL.enableVertexAttribArray(this.shader.attribute('uv'));
+      GL.enableVertexAttribArray(this.shader.attribute('uvStart'));
+      GL.enableVertexAttribArray(this.shader.attribute('uvSize'));
+      GL.enableVertexAttribArray(this.shader.attribute('offset'));
+      GL.enableVertexAttribArray(this.shader.attribute('scale'));
+      GL.enableVertexAttribArray(this.shader.attribute('color'));
+
+      GL.bindBuffer(GL.ARRAY_BUFFER, this.vertexBuffer);
+      GL.vertexAttribPointer(this.shader.attribute('position'), 3, GL.FLOAT, false, 0, 0);
+      GL.bindBuffer(GL.ARRAY_BUFFER, this.uvBuffer);
+      GL.vertexAttribPointer(this.shader.attribute('uv'), 2, GL.FLOAT, false, 0, 0);
+      GL.bindBuffer(GL.ARRAY_BUFFER, this.uvStartBuffer);
+      GL.vertexAttribPointer(this.shader.attribute('uvStart'), 2, GL.FLOAT, false, 0, 0);
+      GL.vertexAttribDivisor(this.shader.attribute('uvStart'), 1);
+      GL.bindBuffer(GL.ARRAY_BUFFER, this.uvSizeBuffer);
+      GL.vertexAttribPointer(this.shader.attribute('uvSize'), 2, GL.FLOAT, false, 0, 0);
+      GL.vertexAttribDivisor(this.shader.attribute('uvSize'), 1);
+      GL.bindBuffer(GL.ARRAY_BUFFER, this.offsetBuffer);
+      GL.vertexAttribPointer(this.shader.attribute('offset'), 3, GL.FLOAT, false, 0, 0);
+      GL.vertexAttribDivisor(this.shader.attribute('offset'), 1);
+      GL.bindBuffer(GL.ARRAY_BUFFER, this.scaleBuffer);
+      GL.vertexAttribPointer(this.shader.attribute('scale'), 1, GL.FLOAT, false, 0, 0);
+      GL.vertexAttribDivisor(this.shader.attribute('scale'), 1);
+      GL.bindBuffer(GL.ARRAY_BUFFER, this.colorBuffer);
+      GL.vertexAttribPointer(this.shader.attribute('color'), 1, GL.FLOAT, false, 0, 0);
+      GL.vertexAttribDivisor(this.shader.attribute('color'), 1);
+      GL.bindBuffer(GL.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+      GL.bindVertexArray(null);
+    }
   }
 
   /**
@@ -361,7 +503,7 @@ export class Sprites {
   private static generateCollider(def: SpriteDef, position: vec3, side: number = 0): CollisionBox {
     // Building AABB for model
     for (const fr of def.frames) {
-      if (fr.name.endsWith('.s3d')) {
+      if (fr.mesh) {
         return Resources.Models[fr.name].getCollider(position, side, def.scale);
       }
     }

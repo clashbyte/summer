@@ -93,6 +93,7 @@ export class Engine {
     Soundscape.init();
 
     this.player = new Player([13, 4, 19], -85);
+    // this.player = new Player([13, 0, 27], -85);
     Engine.loaded = true;
     if (Engine.onLoad) Engine.onLoad();
   }
@@ -125,6 +126,7 @@ export class Engine {
     this.fences?.render();
     this.sprites?.render();
     GL.disable(GL.DEPTH_TEST);
+    // this.sky?.renderHalo();
   }
 
   /**

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { MouseEvent, useEffect, useRef } from 'react';
 import { init, resize, run, stop } from 'src/core/Core';
 import styles from './GameCanvas.module.scss';
 
@@ -20,5 +20,11 @@ export function GameCanvas() {
     }
   }, [ref]);
 
-  return <canvas ref={ref} className={styles.canvas} />;
+  const handleContext = (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    return false;
+  };
+
+  return <canvas ref={ref} className={styles.canvas} onContextMenu={handleContext} />;
 }

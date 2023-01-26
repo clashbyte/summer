@@ -3,6 +3,7 @@ import { BinaryReader } from 'src/content/helpers/BinaryReader';
 import { Camera } from 'src/core/Camera';
 import { GL } from 'src/core/Core';
 import { Shader } from 'src/core/Shader';
+import { Shadowmap } from 'src/core/Shadowmap';
 import { CollisionBox } from 'src/entities/Player';
 import SpriteFragCode from 'src/shaders/entities/mesh.frag.glsl';
 import SpriteVertCode from 'src/shaders/entities/mesh.vert.glsl';
@@ -54,14 +55,14 @@ export class MeshSprite {
    * @type {Shader}
    * @private
    */
-  private shader: Shader;
+  private static shader: Shader;
 
   /**
    * Shader for shadow pass
    * @type {Shader}
    * @private
    */
-  private shaderShadow: Shader;
+  private static shaderShadow: Shader;
 
   /**
    * Collision AABB
@@ -179,13 +180,18 @@ export class MeshSprite {
     this.normalBuffer = GL.createBuffer()!;
     this.indexCount = positions.length;
     this.texture = texture;
-    this.shader = new Shader(
-      SpriteFragCode,
-      SpriteVertCode,
-      ['diffuse', 'shadow', 'angleMat', 'shadowMat', 'ambient', 'sunlight'],
-      ['position', 'uv', 'normal']
-    );
-    this.shaderShadow = new Shader(ShadowFragCode, ShadowVertCode, ['angleMat'], ['position']);
+
+    if (!MeshSprite.shader) {
+      MeshSprite.shader = new Shader(
+        SpriteFragCode,
+        SpriteVertCode,
+        ['diffuse', 'shadow', 'angleMat', 'shadowMat', 'ambient', 'sunlight'],
+        ['position', 'uv', 'normal']
+      );
+    }
+    if (!MeshSprite.shaderShadow) {
+      MeshSprite.shaderShadow = new Shader(ShadowFragCode, ShadowVertCode, ['angleMat'], ['position', 'uv']);
+    }
 
     // Sending vertex data
     GL.bindBuffer(GL.ARRAY_BUFFER, this.vertexBuffer);
@@ -209,38 +215,43 @@ export class MeshSprite {
     // Updating state and binding shader
     GL.enable(GL.CULL_FACE);
     GL.cullFace(GL.FRONT);
-    this.shader.updateMatrix(matrix);
-    this.shader.bind();
+    MeshSprite.shader.updateMatrix(matrix);
+    MeshSprite.shader.bind();
 
     // Sending vertex buffers
-    GL.enableVertexAttribArray(this.shader.attribute('position'));
-    GL.enableVertexAttribArray(this.shader.attribute('uv'));
-    GL.enableVertexAttribArray(this.shader.attribute('normal'));
+    GL.enableVertexAttribArray(MeshSprite.shader.attribute('position'));
+    GL.enableVertexAttribArray(MeshSprite.shader.attribute('uv'));
+    GL.enableVertexAttribArray(MeshSprite.shader.attribute('normal'));
     GL.bindBuffer(GL.ARRAY_BUFFER, this.vertexBuffer);
-    GL.vertexAttribPointer(this.shader.attribute('position'), 3, GL.FLOAT, false, 0, 0);
+    GL.vertexAttribPointer(MeshSprite.shader.attribute('position'), 3, GL.FLOAT, false, 0, 0);
     GL.bindBuffer(GL.ARRAY_BUFFER, this.normalBuffer);
-    GL.vertexAttribPointer(this.shader.attribute('normal'), 3, GL.FLOAT, true, 0, 0);
+    GL.vertexAttribPointer(MeshSprite.shader.attribute('normal'), 3, GL.FLOAT, true, 0, 0);
     GL.bindBuffer(GL.ARRAY_BUFFER, this.uvBuffer);
-    GL.vertexAttribPointer(this.shader.attribute('uv'), 2, GL.FLOAT, false, 0, 0);
+    GL.vertexAttribPointer(MeshSprite.shader.attribute('uv'), 2, GL.FLOAT, false, 0, 0);
 
     // Updating value uniforms
-    GL.uniform3f(this.shader.uniform('sunlight'), ...World.SUN_COLOR);
-    GL.uniform3f(this.shader.uniform('ambient'), ...World.AMBIENT_COLOR);
-    GL.uniformMatrix4fv(this.shader.uniform('shadowMat'), false, Camera.getShadowMatrix());
-    GL.uniformMatrix4fv(this.shader.uniform('angleMat'), false, angleMat);
+    GL.uniform3f(MeshSprite.shader.uniform('sunlight'), ...World.SUN_COLOR);
+    GL.uniform3f(MeshSprite.shader.uniform('ambient'), ...World.AMBIENT_COLOR);
+    GL.uniformMatrix4fv(MeshSprite.shader.uniform('shadowMat'), false, Camera.getShadowMatrix());
+    GL.uniformMatrix4fv(MeshSprite.shader.uniform('angleMat'), false, angleMat);
 
     // Updating textures
-    GL.bindTexture(GL.TEXTURE_2D, this.texture);
     GL.activeTexture(GL.TEXTURE0);
-    GL.uniform1i(this.shader.uniform('diffuse'), 0);
+    GL.bindTexture(GL.TEXTURE_2D, this.texture);
     GL.activeTexture(GL.TEXTURE1);
-    GL.uniform1i(this.shader.uniform('shadow'), 1);
+    GL.bindTexture(GL.TEXTURE_2D, Shadowmap.Texture);
+    GL.uniform1i(MeshSprite.shader.uniform('diffuse'), 0);
+    GL.uniform1i(MeshSprite.shader.uniform('shadow'), 1);
 
     // Rendering mesh and cleaning up
     GL.drawArrays(GL.TRIANGLES, 0, this.indexCount / 3);
     GL.bindBuffer(GL.ARRAY_BUFFER, null);
+    GL.activeTexture(GL.TEXTURE1);
+    GL.bindTexture(GL.TEXTURE_2D, null);
     GL.activeTexture(GL.TEXTURE0);
-    this.shader.unbind();
+    GL.bindTexture(GL.TEXTURE_2D, null);
+
+    MeshSprite.shader.unbind();
     GL.cullFace(GL.BACK);
   }
 
@@ -249,20 +260,22 @@ export class MeshSprite {
    * @param {mat4} matrix
    */
   public renderShadow(matrix: mat4) {
-    this.shaderShadow.updateMatrix(matrix);
-    this.shaderShadow.bind();
-    GL.enableVertexAttribArray(this.shader.attribute('position'));
-    GL.enableVertexAttribArray(this.shader.attribute('uv'));
+    GL.disable(GL.CULL_FACE);
+    MeshSprite.shaderShadow.updateMatrix(matrix);
+    MeshSprite.shaderShadow.bind();
+    GL.enableVertexAttribArray(MeshSprite.shaderShadow.attribute('position'));
+    GL.enableVertexAttribArray(MeshSprite.shaderShadow.attribute('uv'));
     GL.bindBuffer(GL.ARRAY_BUFFER, this.vertexBuffer);
-    GL.vertexAttribPointer(this.shader.attribute('position'), 3, GL.FLOAT, false, 0, 0);
+    GL.vertexAttribPointer(MeshSprite.shaderShadow.attribute('position'), 3, GL.FLOAT, false, 0, 0);
     GL.bindBuffer(GL.ARRAY_BUFFER, this.uvBuffer);
-    GL.vertexAttribPointer(this.shader.attribute('uv'), 2, GL.FLOAT, false, 0, 0);
+    GL.vertexAttribPointer(MeshSprite.shaderShadow.attribute('uv'), 2, GL.FLOAT, false, 0, 0);
 
     GL.bindTexture(GL.TEXTURE_2D, this.texture);
-    GL.uniform1i(this.shader.uniform('diffuse'), 0);
+    GL.uniform1i(MeshSprite.shaderShadow.uniform('diffuse'), 0);
     GL.drawArrays(GL.TRIANGLES, 0, this.indexCount / 3);
     GL.bindBuffer(GL.ARRAY_BUFFER, null);
-    this.shaderShadow.unbind();
+    MeshSprite.shaderShadow.unbind();
+    GL.enable(GL.CULL_FACE);
   }
 
   /**

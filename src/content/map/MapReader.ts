@@ -51,7 +51,7 @@ export interface Entity {
 export interface SpriteDef {
   solid: boolean;
   scale: number;
-  frames: { name: string; delay: number }[];
+  frames: { name: string; delay: number; mesh: boolean }[];
 }
 
 /**
@@ -235,12 +235,14 @@ export class MapReader {
       for (let j = 0; j < frameCount; j++) {
         const name = f.readString();
         const delay = f.readShort();
-        if (name.endsWith('.s3d') && !models.includes(name)) {
+        const mesh = name.endsWith('.s3d');
+        if (mesh && !models.includes(name)) {
           models.push(name);
           sprite.solid = true;
         }
         sprite.frames.push({
           name,
+          mesh,
           delay
         });
       }

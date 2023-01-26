@@ -104,7 +104,7 @@ export class World {
     this.shader = new Shader(
       MapFragCode,
       MapVertCode,
-      ['atlas', 'sunlight', 'ambient', 'shadow', 'shadowMat'],
+      ['atlas', 'sunlight', 'ambient', 'shadow', 'shadowMat', 'pointCount', 'pointLights[0]', 'pointFactor'],
       ['position', 'uv', 'normal']
     );
     this.shaderShadow = new Shader(MapShadowFragCode, MapShadowVertCode, [], ['position']);
@@ -131,6 +131,16 @@ export class World {
     GL.enable(GL.CULL_FACE);
     GL.cullFace(GL.BACK);
 
+    const lightCount = 3;
+    const lights = [
+      [16, 1, 22], //
+      [16, 3, 20],
+      [16, 5, 20]
+    ].flat();
+
+    GL.uniform1f(this.shader.uniform('pointFactor'), 1);
+    GL.uniform1i(this.shader.uniform('pointCount'), lightCount);
+    GL.uniform3fv(this.shader.uniform('pointLights[0]'), lights);
     GL.uniform3f(this.shader.uniform('sunlight'), ...World.SUN_COLOR);
     GL.uniform3f(this.shader.uniform('ambient'), ...World.AMBIENT_COLOR);
 
@@ -148,7 +158,6 @@ export class World {
     GL.bindTexture(GL.TEXTURE_2D, Resources.Textures.texture);
     GL.activeTexture(GL.TEXTURE1);
     GL.bindTexture(GL.TEXTURE_2D, Shadowmap.Texture);
-    // GL.bindTexture(GL.TEXTURE_2D, texture);
     GL.uniform1i(this.shader.uniform('atlas'), 0);
     GL.uniform1i(this.shader.uniform('shadow'), 1);
     GL.uniformMatrix4fv(this.shader.uniform('shadowMat'), false, Camera.getShadowMatrix());
@@ -157,7 +166,10 @@ export class World {
     GL.bindBuffer(GL.ELEMENT_ARRAY_BUFFER, null);
     GL.bindBuffer(GL.ARRAY_BUFFER, null);
 
+    GL.activeTexture(GL.TEXTURE1);
+    GL.bindTexture(GL.TEXTURE_2D, null);
     GL.activeTexture(GL.TEXTURE0);
+    GL.bindTexture(GL.TEXTURE_2D, null);
 
     this.shader.unbind();
   }
@@ -170,9 +182,9 @@ export class World {
 
     GL.disable(GL.CULL_FACE);
 
-    GL.enableVertexAttribArray(this.shader.attribute('position'));
+    GL.enableVertexAttribArray(this.shaderShadow.attribute('position'));
     GL.bindBuffer(GL.ARRAY_BUFFER, this.vertexBuffer);
-    GL.vertexAttribPointer(this.shader.attribute('position'), 3, GL.FLOAT, false, 0, 0);
+    GL.vertexAttribPointer(this.shaderShadow.attribute('position'), 3, GL.FLOAT, false, 0, 0);
     GL.bindBuffer(GL.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
     GL.drawElements(GL.TRIANGLES, this.indexCount, GL.UNSIGNED_SHORT, 0);
     GL.bindBuffer(GL.ELEMENT_ARRAY_BUFFER, null);

@@ -95,7 +95,7 @@ export class Camera {
    * @param {number} aspect
    */
   public static updateProjection(aspect: number) {
-    mat4.perspective(this.projMatrix, 1.04, aspect, 0.05, 500);
+    mat4.perspective(this.projMatrix, aspect < 1 ? 1.4 : 1.04, aspect, 0.05, 500);
   }
 
   /**
@@ -132,6 +132,7 @@ export class Camera {
         quat.fromEuler(quat.create(), this.rot[0], this.rot[1], this.rot[2]),
         this.pos
       );
+
       mat4.invert(this.viewMatrix, this.cameraMatrix);
       this.matrixDirty = false;
     }
